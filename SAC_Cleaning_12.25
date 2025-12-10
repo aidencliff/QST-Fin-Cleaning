@@ -1,0 +1,349 @@
+Sub ReplaceEmDashWithBlank()
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim rng As Range
+    Dim cell As Range
+    Dim emDash As String
+    
+    ' Set worksheet and em dash character
+    Set ws = ActiveSheet
+    emDash = "–"   ' This is the actual em dash character"
+    
+    ' Determine last row based on column O (adjust if needed)
+    lastRow = ws.Cells(ws.Rows.Count, "O").End(xlUp).Row
+    
+    ' Columns O:P range
+    Set rng = ws.Range("O1:P" & lastRow)
+    
+    ' Loop through each cell
+    For Each cell In rng
+        If Trim(cell.Value) = emDash Then
+            cell.ClearContents   ' Replace with an actual blank cell
+        End If
+    Next cell
+
+    MsgBox "Em dashes have been replaced with blank cells.", vbInformation
+
+End Sub
+
+Sub Fin_Trans_Clean_SAC()
+
+    Dim ws As Worksheet
+    Dim lastRow As Long
+    Dim i As Long
+    Dim fringeSheet As Worksheet
+    Dim fringeLastRow As Long
+    Dim payrollSheet As Worksheet
+    Dim payrollLastRow As Long
+    Dim studentSheet As Worksheet
+    Dim studentLastRow As Long
+
+    '--------------------------------------------------------------------------------
+    ' 1) Identify which worksheet you want to clean
+    '    - You can replace ActiveSheet with a specific worksheet name if desired:
+    '      Set ws = ThisWorkbook.Sheets("NameOfYourDataSheet")
+    '--------------------------------------------------------------------------------
+    Set ws = ActiveSheet
+
+    '--------------------------------------------------------------------------------
+    ' 2) Basic safety checks: do we have enough rows/columns to work with?
+    '--------------------------------------------------------------------------------
+    If ws.UsedRange.Rows.Count < 2 Then
+        ' If there's fewer than 2 rows of data, there's nothing to process
+        Exit Sub
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 3) Remove the first row (if it's not your header) and remove the last row
+    '--------------------------------------------------------------------------------
+    ws.Rows(1).Delete
+    
+    ' Recalculate the last row
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' Make sure we still have at least 1 row of data
+    If lastRow >= 1 Then
+        ws.Rows(lastRow).Delete
+    End If
+    
+    ' Recalculate the last row after deletions
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    ' If no rows left, exit
+    If lastRow < 1 Then Exit Sub
+
+    '--------------------------------------------------------------------------------
+    ' 4) Replace "FUNDED_PROGRAM_NR" in Column A (from row 2 down)
+    '--------------------------------------------------------------------------------
+    If lastRow >= 2 Then
+        For i = 2 To lastRow
+            If InStr(1, ws.Cells(i, 1).Value, "FUNDED_PROGRAM_NR", vbTextCompare) > 0 Then
+                ws.Cells(i, 1).Value = "Base"
+            End If
+        Next i
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 5) Convert Column A (rows 2 to lastRow) to number format
+    '--------------------------------------------------------------------------------
+    If lastRow >= 2 Then
+        With ws.Range("A2:A" & lastRow)
+            .NumberFormat = "0"
+            .Value = .Value
+        End With
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 6) Delete rows where Column P = 0 AND Column O is blank
+    '    - Check if columns O and P exist (O=15, P=16). If the sheet has fewer columns,
+    '      this would fail, so we guard against that.
+    '--------------------------------------------------------------------------------
+    If ws.Columns.Count >= 16 Then
+        lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+        
+        For i = lastRow To 2 Step -1
+            If ws.Cells(i, "P").Value = 0 And Trim(ws.Cells(i, "O").Value) = "" Then
+                ws.Rows(i).Delete
+            End If
+        Next i
+        
+        ' Add header "Actuals" in cell O1 and "Commitments" in cell P1
+        ws.Range("O1").Value = "Actuals"
+        ws.Range("P1").Value = "Commitments"
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 7) Convert Column C to number format (if it exists) before checking "860" or "5002"
+    '--------------------------------------------------------------------------------
+    If ws.Columns.Count >= 3 Then
+        lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+        If lastRow >= 2 Then
+            With ws.Range("C2:C" & lastRow)
+                .NumberFormat = "0"
+                .Value = .Value
+            End With
+        End If
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 8) Create a new sheet named "Fringe" to receive any rows where Column C starts
+    '    with "860"
+    '--------------------------------------------------------------------------------
+    Set fringeSheet = ThisWorkbook.Worksheets.Add( _
+                     After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    On Error Resume Next
+    fringeSheet.Name = "Fringe"
+    On Error GoTo 0
+
+    '--------------------------------------------------------------------------------
+    ' 9) Transfer rows whose Column C starts with "860" to "Fringe" sheet
+    '    - Loop from bottom to top so row deletions don’t affect indexing
+    '--------------------------------------------------------------------------------
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    For i = lastRow To 2 Step -1
+        ' Ensure column C is not empty
+        If ws.Columns.Count >= 3 Then
+            Dim cellVal As String
+            cellVal = CStr(ws.Cells(i, "C").Value)
+            ' Check if the first three characters are "860"
+            If Left(cellVal, 3) = "860" Then
+                ' Find next available row on Fringe sheet
+                fringeLastRow = fringeSheet.Cells(fringeSheet.Rows.Count, "A").End(xlUp).Row
+                ' If the Fringe sheet is blank, treat that as 0
+                If fringeLastRow = 1 And fringeSheet.Cells(1, "A").Value = "" Then
+                    fringeLastRow = 0
+                End If
+                ' Copy the entire row
+                ws.Rows(i).Copy Destination:=fringeSheet.Rows(fringeLastRow + 1)
+                ' Delete from original
+                ws.Rows(i).Delete
+            End If
+        End If
+    Next i
+
+    '--------------------------------------------------------------------------------
+    ' 10) On the "Fringe" sheet, remove columns: B, E, and G through N
+    '--------------------------------------------------------------------------------
+    With fringeSheet
+        .Columns("G:N").Delete  ' Delete columns G to N first
+        .Columns("E").Delete   ' Then delete column E
+        .Columns("B").Delete   ' Finally, delete column B
+    End With
+
+    '--------------------------------------------------------------------------------
+    ' 11) Create a new sheet named "Payroll_FT" to receive any rows where Column C starts
+    '     with "5002"
+    '--------------------------------------------------------------------------------
+    Set payrollSheet = ThisWorkbook.Worksheets.Add( _
+                     After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    On Error Resume Next
+    payrollSheet.Name = "Payroll_FT"
+    On Error GoTo 0
+
+    '--------------------------------------------------------------------------------
+    ' 12) Transfer rows whose Column C starts with "5002" or "5000" to "Payroll_FT" sheet
+    '     - Loop from bottom to top so row deletions don’t affect indexing
+    '--------------------------------------------------------------------------------
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    For i = lastRow To 2 Step -1
+        If ws.Columns.Count >= 3 Then
+            Dim cellVal2 As String
+            cellVal2 = CStr(ws.Cells(i, "C").Value)
+            ' Check if the first four characters are "5002" or "5000"
+            If Left(cellVal2, 4) = "5002" Or Left(cellVal2, 4) = "5000" Then
+                payrollLastRow = payrollSheet.Cells(payrollSheet.Rows.Count, "A").End(xlUp).Row
+                If payrollLastRow = 1 And payrollSheet.Cells(1, "A").Value = "" Then
+                    payrollLastRow = 0
+                End If
+                ' Copy the entire row
+                ws.Rows(i).Copy Destination:=payrollSheet.Rows(payrollLastRow + 1)
+                ws.Rows(i).Delete
+            End If
+        End If
+    Next i
+
+    '--------------------------------------------------------------------------------
+    ' 13) On the "Payroll_FT" sheet, remove columns: I through N and then column E
+    '--------------------------------------------------------------------------------
+    With payrollSheet
+        .Columns("I:N").Delete
+        .Columns("E").Delete
+    End With
+
+    '--------------------------------------------------------------------------------
+    ' 14) On the "Payroll_FT" sheet, convert column G to number format
+    '     (Assuming row 1 is a header, data conversion starts from row 2)
+    '--------------------------------------------------------------------------------
+    Dim lastRowPayroll As Long
+    lastRowPayroll = payrollSheet.Cells(payrollSheet.Rows.Count, "G").End(xlUp).Row
+    If lastRowPayroll >= 2 Then
+        With payrollSheet.Range("G1:G" & lastRowPayroll)
+            .NumberFormat = "0"
+            .Value = .Value
+        End With
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 15) Create a new sheet named "Payroll_Student" to receive any rows where Column C starts
+    '     with "5004" or "5005" (transfer only; do not delete from original)
+    '--------------------------------------------------------------------------------
+    Set studentSheet = ThisWorkbook.Worksheets.Add( _
+                       After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    On Error Resume Next
+    studentSheet.Name = "Payroll_Student"
+    On Error GoTo 0
+    
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    For i = lastRow To 2 Step -1
+        Dim cellVal3 As String
+        cellVal3 = CStr(ws.Cells(i, "C").Value)
+        If Left(cellVal3, 4) = "5004" Or Left(cellVal3, 4) = "5005" Then
+            studentLastRow = studentSheet.Cells(studentSheet.Rows.Count, "A").End(xlUp).Row
+            If studentLastRow = 1 And studentSheet.Cells(1, "A").Value = "" Then
+                studentLastRow = 0
+            End If
+            ws.Rows(i).Copy Destination:=studentSheet.Rows(studentLastRow + 1)
+        End If
+    Next i
+
+    '--------------------------------------------------------------------------------
+    ' 16) On the "Payroll_Student" sheet, convert column H to number format
+    '     (Assuming row 1 is a header, data conversion starts from row 2)
+    '--------------------------------------------------------------------------------
+    Dim lastRowStudent As Long
+    lastRowStudent = studentSheet.Cells(studentSheet.Rows.Count, "H").End(xlUp).Row
+    If lastRowStudent >= 2 Then
+        With studentSheet.Range("H1:H" & lastRowStudent)
+            .NumberFormat = "0"
+            .Value = .Value
+        End With
+    End If
+
+    '--------------------------------------------------------------------------------
+    ' 17) On the "Payroll_Student" sheet, remove columns: I through N and then column E
+    '--------------------------------------------------------------------------------
+    With studentSheet
+        .Columns("I:N").Delete
+        .Columns("E").Delete
+    End With
+
+    '--------------------------------------------------------------------------------
+    ' 18) In the original sheet, set cell Q1 to "Reference" and fill cells in column Q
+    '     with the updated nested IF formula (spread across multiple lines).
+    '--------------------------------------------------------------------------------
+    ws.Range("Q1").Value = "Reference"
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    ws.Range("Q2:Q" & lastRow).FormulaR1C1 = _
+        "=IF(LEFT(RC[-8],2)=""90"",RC[-8]," & _
+        "IF(LEFT(RC[-6],3)=""550"",RC[-6]," & _
+        "IF(RC[-10]=""P. Card"",RC[-9]," & _
+        "IF(RC[-10]=""Concur Invoice"",RC[-7]," & _
+        "IF(RC[-10]=""Telecommunications"",RC[-9]," & _
+        "IF(RC[-10]=""Payroll Posting"",RC[-9]," & _
+        "IF(RC[-14]=539999,RC[-9]," & _
+        "IF(RC[-10]=""Grant NonCost Transf"",RC[-3]," & _
+        "IF(RC[-10]=""Vendor Invoice"",RC[-3]," & _
+        "IF(RC[-10]=""G/L Account Document"",RC[-9]," & _
+        "IF(RC[-10]=""Mailroom"",RC[-9]," & _
+        "IF(LEFT(RC[-14],1)=""4"",RC[-9]," & _
+        "IF(LEFT(RC[-14],1)=""5"",RC[-9],""tbd"")))))))))))))"
+
+    '--------------------------------------------------------------------------------
+    ' 19) Copy the entire column Q (values from the nested IF formula) and paste as values
+    '     into column R, then ensure they're recognized as numeric. Also put "Ref_id" in R1.
+    '--------------------------------------------------------------------------------
+    Dim lastRowRef As Long
+    lastRowRef = ws.Cells(ws.Rows.Count, "Q").End(xlUp).Row
+    
+    ' Set header in R1
+    ws.Range("R1").Value = "Ref_id"
+    
+    ' Copy from Q2:Q(lastRowRef) and paste as values into R2
+    ws.Range("Q2:Q" & lastRowRef).Copy
+    ws.Range("R2").PasteSpecial Paste:=xlPasteValues
+    Application.CutCopyMode = False
+    
+    ' Convert newly pasted values in column R to numeric format
+    With ws.Range("R2:R" & lastRowRef)
+        .NumberFormat = "0"
+        .Value = .Value
+    End With
+    
+    '--------------------------------------------------------------------------------
+    ' 20) Create a new sheet named "Trimmed" and copy selected columns from the reference sheet.
+    '     Mapping:
+    '       New Sheet Column A = Reference Column B
+    '       New Sheet Column B = Reference Column C
+    '       New Sheet Column C = Reference Column D
+    '       New Sheet Column D = Reference Column E
+    '       New Sheet Column E = Reference Column R
+    '       New Sheet Column F = Reference Column F
+    '       New Sheet Column G = Reference Column P
+    '       New Sheet Column H = Reference Column F
+    '       New Sheet Column I = Reference Column O
+    '       New Sheet Column J = Reference Column A
+    '--------------------------------------------------------------------------------
+    Dim trimmedSheet As Worksheet
+    Set trimmedSheet = ThisWorkbook.Worksheets.Add( _
+                       After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    On Error Resume Next
+    trimmedSheet.Name = "Trimmed"
+    On Error GoTo 0
+    
+    ' Use the same lastRow as in the reference sheet
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    trimmedSheet.Range("A1:A" & lastRow).Value = ws.Range("B1:B" & lastRow).Value
+    trimmedSheet.Range("B1:B" & lastRow).Value = ws.Range("C1:C" & lastRow).Value
+    trimmedSheet.Range("C1:C" & lastRow).Value = ws.Range("D1:D" & lastRow).Value
+    trimmedSheet.Range("D1:D" & lastRow).Value = ws.Range("E1:E" & lastRow).Value
+    trimmedSheet.Range("E1:E" & lastRow).Value = ws.Range("R1:R" & lastRow).Value
+    trimmedSheet.Range("F1:F" & lastRow).Value = ws.Range("F1:F" & lastRow).Value
+    trimmedSheet.Range("G1:G" & lastRow).Value = ws.Range("P1:P" & lastRow).Value
+    trimmedSheet.Range("H1:H" & lastRow).Value = ws.Range("F1:F" & lastRow).Value
+    trimmedSheet.Range("I1:I" & lastRow).Value = ws.Range("O1:O" & lastRow).Value
+    trimmedSheet.Range("J1:J" & lastRow).Value = ws.Range("A1:A" & lastRow).Value
+
+End Sub
+
